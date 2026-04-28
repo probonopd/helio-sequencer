@@ -1,0 +1,148 @@
+name: Build Linux aarch64
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+    tags:
+      - '*'
+  pull_request:
+    branches:
+      - master
+      - develop
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04-arm
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libfreetype6-dev \
+            libx11-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxcursor-dev \
+            libxcomposite-dev \
+            mesa-common-dev \
+            freeglut3-dev \
+            libasound2-dev \
+            libjack-dev \
+            file
+
+      - name: Build
+        run: |
+          cd Projects/LinuxMakefile
+          make CONFIG=Release64 TARGET_ARCH= all strip
+
+      - name: Determine release filename
+        id: release_name
+        run: |
+          ARCH="aarch64"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "filename=helio-${TAG}-${ARCH}" >> "${GITHUB_OUTPUT}"
+          elif [[ "${GITHUB_REF}" == refs/heads/develop ]]; then
+            echo "filename=helio-dev-${ARCH}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "filename=helio-ci-${ARCH}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create tarball
+        run: |
+          cd Projects/LinuxMakefile/build
+          tar --transform 's/.*/\L&/' -czf "${{ steps.release_name.outputs.filename }}.tar.gz" ./helio
+          ls -lh "${{ steps.release_name.outputs.filename }}.tar.gz"
+
+      - name: Create deb package
+        run: |
+          cd Projects
+          mkdir -p ./Deployment/Linux/Debian/aarch64/usr/bin
+          cp ./LinuxMakefile/build/helio ./Deployment/Linux/Debian/aarch64/usr/bin/helio
+          chmod +x ./Deployment/Linux/Debian/aarch64/usr/bin/helio
+          install -Dm644 ./Deployment/Linux/fm.helio.Workstation.metainfo.xml \
+            -t ./Deployment/Linux/Debian/aarch64/usr/share/metainfo
+          dpkg-deb --build ./Deployment/Linux/Debian/aarch64
+          ls -lh ./Deployment/Linux/Debian/aarch64.deb
+
+      - name: Create AppImage
+        run: |
+          # Set up AppDir
+          APPDIR="${GITHUB_WORKSPACE}/AppDir"
+          mkdir -p "${APPDIR}/usr/bin"
+          mkdir -p "${APPDIR}/usr/share/applications"
+          mkdir -p "${APPDIR}/usr/share/metainfo"
+
+          cp Projects/LinuxMakefile/build/helio "${APPDIR}/usr/bin/helio"
+          chmod +x "${APPDIR}/usr/bin/helio"
+
+          cp Projects/Deployment/Linux/AppImage/aarch64/usr/share/applications/Helio.desktop \
+            "${APPDIR}/usr/share/applications/Helio.desktop"
+          cp Projects/Deployment/Linux/AppImage/aarch64/helio-workstation.png \
+            "${APPDIR}/helio-workstation.png"
+          cp Projects/Deployment/Linux/fm.helio.Workstation.metainfo.xml \
+            "${APPDIR}/usr/share/metainfo/fm.helio.Workstation.metainfo.xml"
+
+          # Download linuxdeploy for aarch64 (handles lib bundling and AppImage creation)
+          wget -q "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage"
+          chmod +x linuxdeploy-aarch64.AppImage
+
+          # Run linuxdeploy (APPIMAGE_EXTRACT_AND_RUN bypasses FUSE requirement)
+          APPIMAGE_EXTRACT_AND_RUN=1 ./linuxdeploy-aarch64.AppImage \
+            --appdir "${APPDIR}" \
+            --desktop-file "${APPDIR}/usr/share/applications/Helio.desktop" \
+            --icon-file "${APPDIR}/helio-workstation.png" \
+            --output appimage
+
+          APPIMAGE_FILE=$(ls Helio*.AppImage 2>/dev/null | head -n1)
+          if [[ -z "${APPIMAGE_FILE}" ]]; then
+            echo "ERROR: No AppImage produced" >&2
+            exit 1
+          fi
+          mv "${APPIMAGE_FILE}" "${{ steps.release_name.outputs.filename }}.AppImage"
+          ls -lh "${{ steps.release_name.outputs.filename }}.AppImage"
+
+      - name: Verify artifact sizes
+        run: |
+          FILENAME="${{ steps.release_name.outputs.filename }}"
+          MIN_BYTES=1048576
+
+          check_size() {
+            local path="$1"
+            local size
+            size=$(stat --format="%s" "${path}" 2>/dev/null || echo 0)
+            echo "$(basename "${path}"): ${size} bytes"
+            if [[ ${size} -lt ${MIN_BYTES} ]]; then
+              echo "ERROR: ${path} is smaller than 1 MB (${size} bytes)" >&2
+              exit 1
+            fi
+          }
+
+          check_size "Projects/LinuxMakefile/build/${FILENAME}.tar.gz"
+          check_size "Projects/Deployment/Linux/Debian/aarch64.deb"
+          check_size "${FILENAME}.AppImage"
+
+      - name: Collect artifacts
+        run: |
+          FILENAME="${{ steps.release_name.outputs.filename }}"
+          mkdir -p artifacts
+          cp "Projects/LinuxMakefile/build/${FILENAME}.tar.gz" artifacts/
+          cp "Projects/Deployment/Linux/Debian/aarch64.deb" "artifacts/${FILENAME}.deb"
+          cp "${FILENAME}.AppImage" artifacts/
+          ls -lh artifacts/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: helio-linux-aarch64
+          path: artifacts/
+          if-no-files-found: error
