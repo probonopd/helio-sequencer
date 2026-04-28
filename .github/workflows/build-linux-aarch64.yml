@@ -10,6 +10,7 @@ on:
   pull_request:
     branches:
       - master
+  workflow_dispatch:
 
 jobs:
   build:
@@ -114,19 +115,11 @@ jobs:
           FILENAME="${{ steps.release_name.outputs.filename }}"
           MIN_BYTES=1048576
 
-          for f in \
-            "Projects/LinuxMakefile/build/${FILENAME}.tar.gz" \
-            "Projects/Deployment/Linux/Debian/aarch64.deb" \
-            "${FILENAME}.AppImage"; do
-            # Resolve path relative to workspace for tar.gz and AppImage
-            :
-          done
-
           check_size() {
             local path="$1"
             local size
             size=$(stat --format="%s" "${path}" 2>/dev/null || echo 0)
-            echo "$(basename ${path}): ${size} bytes"
+            echo "$(basename "${path}"): ${size} bytes"
             if [[ ${size} -lt ${MIN_BYTES} ]]; then
               echo "ERROR: ${path} is smaller than 1 MB (${size} bytes)" >&2
               exit 1
