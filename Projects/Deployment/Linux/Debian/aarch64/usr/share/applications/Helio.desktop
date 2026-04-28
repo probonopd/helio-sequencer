@@ -1,0 +1,18 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Helio
+GenericName=MIDI Sequencer
+GenericName[fr]=Séquenceur MIDI
+Comment=Free and cross-platform lightweight music sequencer
+Comment[fr]=Séquenceur musical léger, multi-plateformes, et libre
+Exec=/usr/bin/helio
+Terminal=false
+Icon=helio-workstation
+Categories=Audio;AudioVideo;Midi;Sequencer;Music;
+StartupNotify=true
+Actions=Window;
+
+[Desktop Action Window]
+Name=New Window
+Exec=/usr/bin/helio
